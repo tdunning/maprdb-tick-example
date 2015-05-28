@@ -43,10 +43,13 @@ public class HBaseExample {
     public static void persistMapAsync(Map<String, DataReader.TransactionList> mp, String tableName, String cfName) throws java.io.IOException {
         TickDataClient tdc = new TickDataClient("", cfName, tableName);
         tdc.init();
+        double pt0 = System.nanoTime() * 1e-9;
         for (String s : mp.keySet()) {
             KeyValue kv = new KeyValue(Bytes.toBytes(s), Bytes.toBytes(cfName), Bytes.toBytes("data"), Bytes.toBytes(mp.get(s).asJsonMaps()));
             tdc.performPut(kv);
         }
+        double pt1 = System.nanoTime() * 1e-9;
+        System.out.printf("Wrote %d equities in %.3f seconds\n", mp.size(), pt1 - pt0);
         tdc.term();
     }
 
@@ -54,31 +57,33 @@ public class HBaseExample {
 		Configuration config = HBaseConfiguration.create();
 		HTable table = new HTable(config, tableName);
 
+        double pt0 = System.nanoTime() * 1e-9;
         for (String s : mp.keySet()) {
 			Put p = new Put(Bytes.toBytes(s));
 			p.add(Bytes.toBytes(cfName), Bytes.toBytes("data"), Bytes.toBytes(mp.get(s).asJsonMaps()));
 			table.put(p);
         }
+        double pt1 = System.nanoTime() * 1e-9;
+        System.out.printf("Wrote %d equities in %.3f seconds\n", mp.size(), pt1 - pt0);
 	}
 
 	public static void main(String[] args) throws IOException {
         Boolean async = args[2].equals("async");
+        String inputFilePath = args[1];
+        String tableName = args[0];
 
         DataReader rd = new DataReader();
         double t0 = System.nanoTime() * 1e-9;
-        Map<String, DataReader.TransactionList> m = rd.read(Files.newReaderSupplier(Paths.get(args[1]).toFile(), Charsets.UTF_8));
+        Map<String, DataReader.TransactionList> m = rd.read(Files.newReaderSupplier(Paths.get(inputFilePath).toFile(), Charsets.UTF_8));
         double t1 = System.nanoTime() * 1e-9;
         System.out.printf("Read %d equities in %.3f seconds\n", m.size(), t1 - t0);
 
-		double pt0 = System.nanoTime() * 1e-9;
         if (async) {
             System.err.println("persisting to DB asynchronously.");
-            persistMapAsync(m, args[0], "cf1");
+            persistMapAsync(m, tableName, "cf1");
         } else {
             System.err.println("persisting to DB synchronously.");
-            persistMap(m, args[0], "cf1");
+            persistMap(m, tableName, "cf1");
         }
-		double pt1 = System.nanoTime() * 1e-9;
-		System.out.printf("Wrote %d equities in %.3f seconds\n", m.size(), pt1 - pt0);
 	}
 }
