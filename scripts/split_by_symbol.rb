@@ -2,7 +2,7 @@
 
 cores = 12
 symbols = []
-File.open("symbols_only.tsv").each_line do |line|
+File.open("src/test/resources/symbols_only.tsv").each_line do |line|
 	symbols.push(line.strip)
 end
 

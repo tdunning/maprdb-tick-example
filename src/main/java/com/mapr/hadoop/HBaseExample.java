@@ -1,76 +1,84 @@
 package com.mapr.hadoop;
 
-import com.google.common.base.Splitter;
+import com.google.common.collect.Lists;
+import org.apache.hadoop.hbase.util.Bytes;
+import org.hbase.async.KeyValue;
 import org.joda.time.*;
 
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.HashMap;
-import java.util.TimeZone;
-import java.text.SimpleDateFormat;
-import java.text.ParseException;
 import java.io.*;
 import java.nio.file.Paths;
+import java.util.Set;
+import java.util.concurrent.*;
 
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.HBaseConfiguration;
-import org.apache.hadoop.hbase.client.Get;
-import org.apache.hadoop.hbase.client.HTable;
-import org.apache.hadoop.hbase.client.Put;
-import org.apache.hadoop.hbase.client.Result;
-import org.apache.hadoop.hbase.util.Bytes;
-
-
-import com.mapr.hadoop.Tick;
-import org.joda.time.format.DateTimeFormat;
-import org.joda.time.format.DateTimeFormatter;
 import com.google.common.base.Charsets;
 import com.google.common.io.Files;
-import org.hbase.async.KeyValue;
 // Input file is in CSV format:
 // Symbol,Date,Open,High,Low,Close,Volume
 // AAIT,18-May-2015 11:29,36.58,36.58,36.58,36.58,375
 
 public class HBaseExample {	
-	private static BufferedReader reader;
-
 	private static String generateKeyString(String symbol, DateTime dateTime) {
-		// TODO suggest String.format("%s_%tY-%<tm-%<td-%<tH", symbol ,dateTime.toDate()) here
-		return symbol + "_" + dateTime.getYear() + dateTime.getMonthOfYear() + dateTime.getDayOfMonth() + dateTime.getHourOfDay();
+        return String.format("%s_%tY-%<tm-%<td-%<tH", symbol ,dateTime.toDate());
 	}
 
-    public static void persistMapAsync(Map<String, DataReader.TransactionList> mp, String tableName, String cfName) throws java.io.IOException {
-        TickDataClient tdc = new TickDataClient("", cfName, tableName);
-        tdc.init();
-        double pt0 = System.nanoTime() * 1e-9;
-        for (String s : mp.keySet()) {
-            KeyValue kv = new KeyValue(Bytes.toBytes(s), Bytes.toBytes(cfName), Bytes.toBytes("data"), Bytes.toBytes(mp.get(s).asJsonMaps()));
-            tdc.performPut(kv);
+    public static class TickWriterCallable implements Callable<Double> {
+        private TickDataClient tdc;
+        private Map<String, DataReader.TransactionList> mp;
+        private String tableName;
+        private String cfName;
+        private String key;
+        private Double elapsed;
+        Set<String> keySet;
+
+        public TickWriterCallable(TickDataClient _tdc, Map<String,DataReader.TransactionList> _m, String _tableName, String _cfName, String _key) {
+            tdc = _tdc;
+            mp = _m;
+            tableName = _tableName;
+            cfName = _cfName;
+            key = _key;
+            elapsed = 0.0;
+            keySet = new HashSet<String>();
+
+            keySet.add(key);
         }
-        double pt1 = System.nanoTime() * 1e-9;
-        System.out.printf("Wrote %d equities in %.3f seconds\n", mp.size(), pt1 - pt0);
-        tdc.term();
+
+        public void persistMapAsync() throws java.io.IOException {
+            byte[] cfNameBytes = Bytes.toBytes(cfName);
+            byte[] columnNameBytes = Bytes.toBytes("data");
+
+            double pt0 = System.nanoTime() * 1e-9;
+            for (String s : keySet) {
+                KeyValue kv = new KeyValue(Bytes.toBytes(s), cfNameBytes, columnNameBytes, Bytes.toBytes(mp.get(s).asJsonMaps()));
+                tdc.performPut(kv);
+            }
+            double pt1 = System.nanoTime() * 1e-9;
+            // System.out.printf("Wrote %d equities in %.3f seconds\n", mp.size(), pt1 - pt0);
+            elapsed = pt1-pt0;
+        }
+
+        @Override
+        public Double call() {
+            try {
+                persistMapAsync();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return elapsed;
+        }
     }
 
-	public static void persistMap(Map<String, DataReader.TransactionList> mp, String tableName, String cfName) throws java.io.IOException {
-		Configuration config = HBaseConfiguration.create();
-		HTable table = new HTable(config, tableName);
-
-        double pt0 = System.nanoTime() * 1e-9;
-        for (String s : mp.keySet()) {
-			Put p = new Put(Bytes.toBytes(s));
-			p.add(Bytes.toBytes(cfName), Bytes.toBytes("data"), Bytes.toBytes(mp.get(s).asJsonMaps()));
-			table.put(p);
-        }
-        double pt1 = System.nanoTime() * 1e-9;
-        System.out.printf("Wrote %d equities in %.3f seconds\n", mp.size(), pt1 - pt0);
-	}
-
 	public static void main(String[] args) throws IOException {
-        Boolean async = args[2].equals("async");
-        String inputFilePath = args[1];
-        String tableName = args[0];
+        String cfName = args[0];
+        String tableName = args[1];
+        String inputFilePath = args[2];
+        int nThreads = 5;
+
+        ExecutorService es = Executors.newFixedThreadPool(nThreads);
+        TickDataClient tdc = new TickDataClient("", cfName, tableName);
+        tdc.init();
 
         DataReader rd = new DataReader();
         double t0 = System.nanoTime() * 1e-9;
@@ -78,12 +86,32 @@ public class HBaseExample {
         double t1 = System.nanoTime() * 1e-9;
         System.out.printf("Read %d equities in %.3f seconds\n", m.size(), t1 - t0);
 
-        if (async) {
-            System.err.println("persisting to DB asynchronously.");
-            persistMapAsync(m, tableName, "cf1");
-        } else {
-            System.err.println("persisting to DB synchronously.");
-            persistMap(m, tableName, "cf1");
+        Set<String> keys = m.keySet();
+        final List<TickWriterCallable> tasks = Lists.newArrayList();
+
+        Double totalElapsed = 0.0;
+        for (String k: keys) {
+            TickWriterCallable t = new TickWriterCallable(tdc, m, tableName, cfName, k);
+            tasks.add(t);
         }
+
+        double t2 = System.nanoTime() * 1e-9;
+        try {
+            List<Future<Double>> results = es.invokeAll(tasks);
+            for (Future<Double> f: results) {
+                try {
+                    totalElapsed += f.get();
+                } catch (ExecutionException e) {
+                    e.printStackTrace();
+                }
+            }
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        double t3 = System.nanoTime() * 1e-9;
+        System.out.printf("Wrote %d equities in %.3f seconds\n", m.size(), t3-t2);
+
+        es.shutdown();
+        tdc.term();
 	}
 }
