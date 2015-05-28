@@ -1,6 +1,7 @@
 package com.mapr.hadoop;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.hbase.async.KeyValue;
 import org.joda.time.*;
@@ -15,11 +16,15 @@ import java.util.concurrent.*;
 
 import com.google.common.base.Charsets;
 import com.google.common.io.Files;
+import org.kohsuke.args4j.CmdLineException;
+import org.kohsuke.args4j.CmdLineParser;
+import org.kohsuke.args4j.Option;
+
 // Input file is in CSV format:
 // Symbol,Date,Open,High,Low,Close,Volume
 // AAIT,18-May-2015 11:29,36.58,36.58,36.58,36.58,375
 
-public class HBaseExample {	
+public class HBaseExample {
 	private static String generateKeyString(String symbol, DateTime dateTime) {
         return String.format("%s_%tY-%<tm-%<td-%<tH", symbol ,dateTime.toDate());
 	}
@@ -33,14 +38,14 @@ public class HBaseExample {
         private Double elapsed;
         Set<String> keySet;
 
-        public TickWriterCallable(TickDataClient _tdc, Map<String,DataReader.TransactionList> _m, String _tableName, String _cfName, String _key) {
+        public TickWriterCallable(TickDataClient _tdc, Map<String, DataReader.TransactionList> _m, String _tableName, String _cfName, String _key) {
             tdc = _tdc;
             mp = _m;
             tableName = _tableName;
             cfName = _cfName;
             key = _key;
             elapsed = 0.0;
-            keySet = new HashSet<String>();
+            keySet = Sets.newHashSet();
 
             keySet.add(key);
         }
@@ -70,11 +75,22 @@ public class HBaseExample {
         }
     }
 
-	public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws IOException, CmdLineException {
+        final Options opts = new Options();
+        CmdLineParser parser = new CmdLineParser(opts);
+        try {
+            parser.parseArgument(args);
+        } catch (CmdLineException e) {
+            System.err.println("Usage: " +
+                    "    [-threads number-of-threads]\n" +
+                    "Default is -threads 5");
+            throw e;
+        }
+
         String cfName = args[0];
         String tableName = args[1];
         String inputFilePath = args[2];
-        int nThreads = 5;
+        int nThreads = opts.threads;
 
         ExecutorService es = Executors.newFixedThreadPool(nThreads);
         TickDataClient tdc = new TickDataClient("", cfName, tableName);
@@ -113,5 +129,11 @@ public class HBaseExample {
 
         es.shutdown();
         tdc.term();
-	}
+    }
+
+    private static class Options {
+        @Option(name = "-threads")
+        int threads = 5;
+    }
+
 }
