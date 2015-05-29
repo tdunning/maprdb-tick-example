@@ -15,7 +15,7 @@ function new_table {
     # machines. The machine I'm currently using has 12 physical cores (24 threads).
     splits="['AAIT','ATRO','CEMI','CZNC','FDML','HBNC','JUNO','MLVF','OVLY','RDUS','SPAN','UCBI','ZIOP',]"
 
-    cat <<EOF | hbase shell
+    cat <<EOF | hbase shell >/dev/null
     create '$TABLE_PATH', '$CFNAME', { SPLITS => $splits }
 EOF
 }

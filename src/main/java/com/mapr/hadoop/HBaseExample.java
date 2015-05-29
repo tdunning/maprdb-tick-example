@@ -26,8 +26,8 @@ import org.kohsuke.args4j.Option;
 
 public class HBaseExample {
 	private static String generateKeyString(String symbol, DateTime dateTime) {
-        return String.format("%s_%tY-%<tm-%<td-%<tH", symbol ,dateTime.toDate());
-	}
+        return String.format("%s_%tY-%<tm-%<td-%<tH", symbol, dateTime.toDate());
+    }
 
     public static class TickWriterCallable implements Callable<Double> {
         private TickDataClient tdc;
@@ -38,16 +38,16 @@ public class HBaseExample {
         private Double elapsed;
         Set<String> keySet;
 
-        public TickWriterCallable(TickDataClient _tdc, Map<String, DataReader.TransactionList> _m, String _tableName, String _cfName, String _key) {
-            tdc = _tdc;
-            mp = _m;
-            tableName = _tableName;
-            cfName = _cfName;
-            key = _key;
+        public TickWriterCallable(TickDataClient tdc, Map<String, DataReader.TransactionList> m, String tableName, String cfName, String key) {
+            this.tdc = tdc;
+            mp = m;
+            this.tableName = tableName;
+            this.cfName = cfName;
+            this.key = key;
             elapsed = 0.0;
             keySet = Sets.newHashSet();
 
-            keySet.add(key);
+            keySet.add(this.key);
         }
 
         public void persistMapAsync() throws java.io.IOException {
@@ -87,8 +87,8 @@ public class HBaseExample {
             throw e;
         }
 
-        String cfName = args[0];
-        String tableName = args[1];
+        String cfName = opts.cfname;
+        String tableName = opts.input;
         String inputFilePath = args[2];
         int nThreads = opts.threads;
 
@@ -132,8 +132,15 @@ public class HBaseExample {
     }
 
     private static class Options {
+        @Option(name = "-column-family")
+        String cfname;
+
+        @Option(name = "-input")
+        String input;
+
         @Option(name = "-threads")
         int threads = 5;
+
     }
 
 }
