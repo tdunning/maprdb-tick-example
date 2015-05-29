@@ -1,12 +1,12 @@
 package com.mapr.hadoop;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.hbase.async.KeyValue;
 import org.joda.time.*;
 
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.io.*;
@@ -31,7 +31,7 @@ public class HBaseExample {
 
     public static class TickWriterCallable implements Callable<Double> {
         private TickDataClient tdc;
-        private Map<String, DataReader.TransactionList> mp;
+        private Map<String, DataReader.TransactionList> tickMap;
         private String tableName;
         private String cfName;
         private String key;
@@ -40,7 +40,7 @@ public class HBaseExample {
 
         public TickWriterCallable(TickDataClient tdc, Map<String, DataReader.TransactionList> m, String tableName, String cfName, String key) {
             this.tdc = tdc;
-            mp = m;
+            tickMap = m;
             this.tableName = tableName;
             this.cfName = cfName;
             this.key = key;
@@ -56,7 +56,11 @@ public class HBaseExample {
 
             double pt0 = System.nanoTime() * 1e-9;
             for (String s : keySet) {
-                KeyValue kv = new KeyValue(Bytes.toBytes(s), cfNameBytes, columnNameBytes, Bytes.toBytes(mp.get(s).asJsonMaps()));
+                DataReader.TransactionList ticks = tickMap.get(s);
+                Preconditions.checkNotNull(ticks, "Ticks not found for %s", s);
+                byte[] value = Bytes.toBytes(ticks.asJsonMaps());
+                Preconditions.checkNotNull(value, "Could not convert JSON to bytes (can't happen!)");
+                KeyValue kv = new KeyValue(Bytes.toBytes(s), cfNameBytes, columnNameBytes, value);
                 tdc.performPut(kv);
             }
             double pt1 = System.nanoTime() * 1e-9;
@@ -82,7 +86,7 @@ public class HBaseExample {
             parser.parseArgument(args);
         } catch (CmdLineException e) {
             System.err.println("Usage: " +
-                    "    [-threads number-of-threads]\n" +
+                    "    -input input-file-name -column-family cf-name [-threads number-of-threads]\n" +
                     "Default is -threads 5");
             throw e;
         }
@@ -105,7 +109,7 @@ public class HBaseExample {
         Set<String> keys = m.keySet();
         final List<TickWriterCallable> tasks = Lists.newArrayList();
 
-        Double totalElapsed = 0.0;
+        double totalElapsed = 0.0;
         for (String k: keys) {
             TickWriterCallable t = new TickWriterCallable(tdc, m, tableName, cfName, k);
             tasks.add(t);
@@ -125,7 +129,7 @@ public class HBaseExample {
             e.printStackTrace();
         }
         double t3 = System.nanoTime() * 1e-9;
-        System.out.printf("Wrote %d equities in %.3f seconds\n", m.size(), t3-t2);
+        System.out.printf("Wrote %d equities in %.3f seconds (%.3f cpu seconds)\n", m.size(), t3-t2, totalElapsed);
 
         es.shutdown();
         tdc.term();
